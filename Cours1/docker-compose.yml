@@ -1,0 +1,11 @@
+version: "3"
+
+services:
+  code:
+    image: pp_gcc_img
+    container_name: pp_gcc
+    command: tail -f /dev/null
+    restart: always
+    volumes:
+      - .:/ProgrammationParallele
+    working_dir: /ProgrammationParallele
