@@ -1,5 +1,6 @@
 #include <immintrin.h>
 #include <stdlib.h>
+#include <random>
 
 /*
 Instead of creating and returning an array, we give a size and a pointer
@@ -8,13 +9,15 @@ This is because returning a list would cause an unneccessary copy to be created 
 which is an additionnal cost.
 
 */
-void createRandomVector(int size, float* vector, int chosenRandMax) {
+float* createRandomVector(int size) {
+    srand (time(NULL));
     // Attribute memory
+    float *vector = NULL;
     vector = (float *) malloc(size * sizeof(float));
 
     for (unsigned long i = 0; i < size; i++) {
-        //s between 0 and chosenRandMax
-        vector[i] = (float)rand()/(float)(RAND_MAX/(float)chosenRandMax);
-    }
 
+        vector[i] = (float)(rand() % 360 - 180.0);
+    }
+    return vector;
 };

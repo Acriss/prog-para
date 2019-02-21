@@ -3,6 +3,6 @@
 
 #include <stdio.h>
 #include <time.h>
-#include "CreateRandomVector.h"
+#include "CreateRandomVector.hpp"
 
 #endif
