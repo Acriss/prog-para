@@ -105,178 +105,68 @@ void cpu(int n, float *x, float *y, float *s)
 As stated earlier, the performance numbers come from a friend.
 
 ![](image/scalaire.cu.png)
-** legend X-axis: data size, Y-axis: time **
+**legend X-axis: data size, Y-axis: time**
 It can be observed that while the total time stays under a max-value, the kernel accelerates exponentially in function of data block size.
 
 Observing the GPU execution profile it can be seen that we are in fact limited by the act of copying data to memory.
 I/O Api Calls cudaMemcpy memory accesses are limiting.
 
-## Scalar Shafted
 
-To mess around with the type of scheduling, we had to make sure all calculations would take the same time. So we chose a particular seed for the creation of random vectors, which means it was always the same vector.
+## Sobel Filter
 
-#### Auto
-
-`auto` simply choses how to distribute the calculations to the threads for us.
-
-| Séquentiel  	| Parallel 1  	| Parallel 2  	| Parallel 4  	| Parallel 8  	|
-|---	|---	|---	|---	|---	|
-| 6.1e-8  	| 3.6e-10  	| 2.0e-10  	| 1.3e-10  	| 1.3e-10  	|
-
-#### Static, size
-
-*Note: SIZE is the size of the vector*
-
-The static mode devide the for loop calculations into chunks of fixed size. This means that if we specify `size = 1000`, the first 1000 iterations are done by thread 1, 1001 to 2000 by thread 2... And then it loops.
-
-We can therefore specify a nicely chosen chunk size (probably something that devides the total amount of iterations). Here are some tests.
-
-###### No size given
-
-| Séquentiel  	| Parallel 1  	| Parallel 2  	| Parallel 4  	| Parallel 8  	|
-|---	|---	|---	|---	|---	|
-| 6.1e-8  	| 3.59e-10  	| 2.0e-10  	| 1.3e-10  	| 1.29e-10  	|
-This is the same results as `auto`, because the compileur knows what chunk size is best, and `static` is the mode out of the available modes.
-
-###### SIZE/2
-
-| Séquentiel  	| Parallel 1  	| Parallel 2  	| Parallel 4  	| Parallel 8  	|
-|---	|---	|---	|---	|---	|
-| 6.1e-8  	| 3.59e-10  	| 2.0e-10  	| 2.0e-10  	| 2.28e-10  	|
-
-We have the same results as before for chunk sizes that let `amount of chunks < amount of threads`
-
-###### SIZE/4
-
-| Séquentiel  	| Parallel 1  	| Parallel 2  	| Parallel 4  	| Parallel 8  	|
-|---	|---	|---	|---	|---	|
-| 6.1e-8  	| 3.6e-10  	| 2.0e-10  	| 1.3e-10  	| 1.45e-10  	|
-
-Same remark
-
-###### Size: 1000
-
-| Séquentiel  	| Parallel 1  	| Parallel 2  	| Parallel 4  	| Parallel 8  	|
-|---	|---	|---	|---	|---	|
-| 6.1e-8  	| 6.2e-10  	| 3.1e-10  	| 1.55e-10  	| 1.69e-10  	|
-
-Lots of chunks this time, which is very bad when we limit the amount of threads, but quite good on 4 threads.
-
-
-#### Dynamic, size
-
-Dynamic scheduling gives each threads a bloc of `size` chunks, and then gives the next bloc to the first thread that frees itself, and so on.
-
-| Séquentiel  	| Parallel 1  	| Parallel 2  	| Parallel 4  	| Parallel 8  	|
-|---	|---	|---	|---	|---	|
-| 6.1e-8  	| 9.3e-9  	| 1.7e-8  	| 3.4e-8  	| 3.0e-8  	|
-
-The results here are very bad, because default `size` is 1, meaning that we dynamically attribute the calculations one at a time.
-
-I won't add all the results, but it is worth noting that `Dynamic, size/4` is not as good as `Static, size/4` even though it sounds like it is the same scheduling.
-
-#### Guided, size
-
-This is the same as dynamic except that the size of the chunks decreases exponentially, with at least `size` iterations in a chunk.
-
-
-## Gaussian Filter
-
-#### Sequential
+#### Cuda code
 
 ```
-for (auto i = 1; i < height - 1; i++)
-{
-    for (auto j = 1; j < width - 1; j++)
-    {
-        if ((i == 0) || (i == height - 1) || (j == 0) || (j == width - 1))
-        {
-            Resultat[i][j] = 0;
-        }
-        else
-        {
-            Resultat[i][j] = std::abs(Source[i - 1][j - 1] + Source[i - 1][j] + Source[i - 1][j + 1] - (Source[i + 1][j - 1] + Source[i + 1][j] + Source[i + 1][j + 1]));
-            Resultat[i][j] += std::abs(Source[i - 1][j - 1] + Source[i][j - 1] + Source[i + 1][j - 1] - (Source[i - 1][j + 1] + Source[i][j + 1] + Source[i + 1][j + 1]));
-        }
+__global__ void gpu_sobel(u_char *Source, int *Resultat, unsigned int height, unsigned int width) {
+    int j = blockIdx.x*blockDim.x + threadIdx.x;
+    int i = blockIdx.y*blockDim.y + threadIdx.y;
+    u_char val;
+    int globalIndex = i*width+j;
+    if ((i==0)||(i>=height-1)||(j==0)||(j>=width-1)) {Resultat[globalIndex]=0;}
+    else {
+        val  = std::abs(Source[(i-1)*width+(j-1)] + Source[(i-1)*width+(j)] + Source[(i-1)*width+(j+1)] -\
+                       (Source[(i+1)*width+(j-1)] + Source[(i+1)*width+(j)] + Source[(i+1)*width+(j+1)]));
+        Resultat[globalIndex]  = val + std::abs(Source[(i-1)*width+(j-1)] + Source[(i)*width+(j-1)] + Source[(i+1)*width+(j-1)] -\
+                                             (Source[(i-1)*width+(j+1)] + Source[(i)*width+(j+1)] + Source[(i+1)*width+(j+1)]));
+
     }
 }
-```
 
-Gaussian Filter is about using element before and element after, so I first need to deal with side effects.
-
-#### Vectorial
-```
-#pragma omp parallel for
-for (auto i = 1; i < height - 1; i++)
-{
-    for (auto j = 1; j < width - 1; j++)
-    {
-        if ((i == 0) || (i == height - 1) || (j == 0) || (j == width - 1))
-        {
-            Resultat[i][j] = 0;
-        }
-        else
-        {
-            Resultat[i][j] = std::abs(Source[i - 1][j - 1] + Source[i - 1][j] + Source[i - 1][j + 1] - (Source[i + 1][j - 1] + Source[i + 1][j] + Source[i + 1][j + 1]));
-            Resultat[i][j] += std::abs(Source[i - 1][j - 1] + Source[i][j - 1] + Source[i + 1][j - 1] - (Source[i - 1][j + 1] + Source[i][j + 1] + Source[i + 1][j + 1]));
-        }
-    }
-}
+__global__ void gpu_sobel_shared(u_char *Source, int *Resultat, unsigned int height, unsigned int width) {
+    __shared__ u_char tuile[BLOCKDIM_X][BLOCKDIM_Y];
     
-```
+    int x = threadIdx.x;
+    int y = threadIdx.y;
+    int i = blockIdx.y*(BLOCKDIM_Y-2) + y;
+    int j = blockIdx.x*(BLOCKDIM_X-2) + x;
+    
+    int globalIndex = i*width+j;
 
-I did some tests trying to parallelized both for loops, or to look into nested parallelism, but it seems fitting that parallelizing line by line is the best way to do it.
+    if ((i==0)||(i>=height-1)||(j==0)||(j>=width-1)) {}
+    else {            
+        //mainstream    
+        tuile[x][y] = Source[globalIndex];
+        __syncthreads();
 
-## List Creation
-
-#### Sequential
-```
-int sequentiel(int* M, int* S, unsigned long int size) {
-    unsigned long int ne = 0;
-    for (unsigned long int i = 0; i < size; i++) {
-        if ( M[i] % 2 == 0 ) {
-            S[ne] = M[i];
-            ne += 1;
+        u_char val;
+        if ((x>0)&&(y>0)&&(x<BLOCKDIM_X-1)&&(y<BLOCKDIM_Y-1)) {
+            val = std::abs(tuile[x-1][y-1] + tuile[x-1][y] + tuile[x-1][y+1] -\
+                          (tuile[x+1][y-1] + tuile[x+1][y] + tuile[x+1][y+1]));
+            Resultat[globalIndex]  = val + std::abs(tuile[x-1][y-1] + tuile[x][y-1] + tuile[x+1][y-1] -\
+                                                   (tuile[x-1][y+1] + tuile[x][y+1] + tuile[x+1][y+1]));
         }
-    }
-    return ne;
-}
+    }  
 ```
 
-#### Vectorial
+This code was given to us by Mr. Cabaret.
 
-```
-omp_set_num_threads(n_threads);
-unsigned long int ne = 0;
-int *T;
-T = (int *) malloc(size * sizeof(int));
-for (auto i = 0; i < size; i++) {
-    T[i] = 200;
-}
+#### Performance
 
+![](image/gpu_sobel.cu.png)
 
-#pragma omp parallel shared(ne)
-{
-    #pragma omp for reduction(+:ne) schedule(static)
-    for (unsigned long int i = 0; i < size; i++) {
-        if ( M[i] % 2 == 0 ) {
-            T[i] = M[i];
-            ne += 1;
-        }        
-    }
-}
+Performances are measured over 1000 iterations and averaged.
+Cpu execution time is constant whatever the image size.
+Kernel gets much faster with bigger images. But memory accesses are still the bottleneck in this algorithm and represent about 80% of the time spent during the benchmark.
 
+![](image/gpu_sobel_stacked.cu.png)
 
-int ind = 0;
-for (auto i = 0; i < size; i++) {
-    if (T[i] != 200) {
-        S[ind] = T[i];
-        ind += 1;
-    }
-}
-free(T);
-
-return ne;
-```
-
-This kind of test. Trying with a critical counter and list, trying with a reduction for the counter, etc... I just need to know that I must be careful with shared resources.
